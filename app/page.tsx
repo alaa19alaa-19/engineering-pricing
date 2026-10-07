@@ -232,21 +232,32 @@ export default function Home() {
     if (!breakdownItem) return;
     setLoadingBreakdown(true);
     try {
+      const itemCode = breakdownItem.item_code || "";
+      
       const { data: template } = await supabase
         .from("breakdown_templates")
-        .select("id")
-        .eq("item_code", breakdownItem.item_code || "CO-003")
+        .select("id, item_code")
+        .eq("item_code", itemCode)
         .single();
-      if (!template) throw new Error("لا يوجد قالب");
-      const answersJson: Record<string, any> = { qty: breakdownItem.quantity || 350 };
+
+      if (!template) throw new Error("لا يوجد قالب Breakdown لهذا البند");
+
+      const answersJson: Record<string, any> = {
+        qty: breakdownItem.quantity || 0,
+      };
+
       breakdownQuestions.forEach((q: any) => {
         const val = breakdownAnswers[`q_${q.id}`];
-        if (q.question_order === 14) answersJson.wastage_concrete = val;
-        if (q.question_order === 15) answersJson.wastage_steel = val;
-        if (q.question_order === 16) answersJson.steel_ratio = val;
-        if (q.question_order === 19) answersJson.overhead = val;
-        if (q.question_order === 20) answersJson.profit = val;
+        if (val === undefined || val === null || val === "") return;
+        const numVal = typeof val === "string" && !isNaN(Number(val)) ? Number(val) : val;
+        if (q.helps_with === "wastage") answersJson.wastage_concrete = numVal;
+        if (q.helps_with === "steel_ratio") answersJson.steel_ratio = numVal;
+        if (q.helps_with === "overhead") answersJson.overhead = numVal;
+        if (q.helps_with === "risk") answersJson.risk = numVal;
+        if (q.helps_with === "profit") answersJson.profit = numVal;
+        if (q.helps_with === "quantity") answersJson.qty = numVal;
       });
+
       const { data: answerRow } = await supabase
         .from("breakdown_answers")
         .insert({
@@ -258,18 +269,31 @@ export default function Home() {
         })
         .select()
         .single();
+
       if (!answerRow) throw new Error("فشل حفظ الإجابات");
-      await supabase.rpc("calculate_breakdown_co003", { p_answer_id: answerRow.id });
+
+      // اختيار دالة الحساب حسب كود البند بدقة
+      let rpcName = "calculate_breakdown_rc"; // الافتراضي
+      if (itemCode.startsWith("1.")) rpcName = "calculate_breakdown_earthworks";
+      else if (itemCode === "2.8") rpcName = "calculate_breakdown_steel";
+      else if (itemCode.startsWith("3.")) rpcName = "calculate_breakdown_insulation";
+      else if (itemCode === "CO-003") rpcName = "calculate_breakdown_co003";
+      else if (itemCode.match(/^2\.[1-7]$/)) rpcName = "calculate_breakdown_rc";
+
+      await supabase.rpc(rpcName, { p_answer_id: answerRow.id });
+
       const { data: components } = await supabase
         .from("breakdown_components")
         .select("*")
         .eq("answer_id", answerRow.id)
         .order("component_type");
+
       const { data: pricing } = await supabase
         .from("breakdown_pricing")
         .select("*")
         .eq("answer_id", answerRow.id)
         .single();
+
       setBreakdownResult({ ...pricing, answer_id: answerRow.id });
       setBreakdownComponents(components || []);
       setShowBreakdownQuestions(false);
@@ -542,7 +566,6 @@ export default function Home() {
   const loadParsedItems = async () => {
     setLoadingParsedItems(true);
 
-    // 1. جلب البنود المستخرجة
     const { data, error } = await supabase
       .from("parsed_boq_items")
       .select("*")
@@ -552,7 +575,6 @@ export default function Home() {
     if (data) setSavedParsedItems(data);
     if (error) console.error("Error loading parsed items:", error);
 
-    // 2. جلب الـ Breakdowns المرتبطة
     const { data: bdData } = await supabase
       .from("breakdown_results")
       .select("*")
@@ -630,7 +652,6 @@ export default function Home() {
     return Array.from(files).sort();
   }, [savedParsedItems]);
 
-  // حساب الإجمالي الكلي للـ Breakdowns في البنود المستخرجة
   const parsedBreakdownsGrandTotal = useMemo(() => {
     return Object.values(parsedBreakdowns).reduce((sum: number, bd: any) => {
       return sum + (Number(bd?.final_price || 0) * Number(bd?.quantity || 0));
@@ -947,9 +968,6 @@ export default function Home() {
     }
   };
 
-  // ============================================
-  // View Saved Breakdown (from parsed items)
-  // ============================================
   const openViewBreakdown = (bd: any) => {
     setViewingBreakdown(bd);
     setShowViewBreakdownModal(true);
@@ -960,7 +978,6 @@ export default function Home() {
     if (!confirm("هل تريد حذف هذا التحليل؟")) return;
     const { error } = await supabase.from("breakdown_results").delete().eq("id", viewingBreakdown.id);
     if (error) { alert("خطأ: " + error.message); return; }
-    // حدّث parsedBreakdowns
     setParsedBreakdowns((prev) => {
       const updated = { ...prev };
       const key = `${viewingBreakdown.item_code}__${viewingBreakdown.source_sheet}`;
@@ -1451,7 +1468,6 @@ export default function Home() {
                       </div>
                     </div>
                   ))}
-                  {/* صف الإجمالي الكلي */}
                   {parsedBreakdownsGrandTotal > 0 && (
                     <div className="bg-gradient-to-r from-orange-600 to-amber-600 text-white p-4 rounded-lg flex justify-between items-center shadow-lg">
                       <span className="text-lg font-bold">💰 الإجمالي الكلي للـ Breakdowns:</span>
@@ -1474,7 +1490,6 @@ export default function Home() {
               <button onClick={() => { setShowViewBreakdownModal(false); setViewingBreakdown(null); }} className="text-3xl text-blue-200 hover:text-white">×</button>
             </div>
             <div className="p-6">
-              {/* بيانات البند */}
               <div className="bg-yellow-50 p-4 rounded-lg mb-6 border-2 border-yellow-200">
                 <h4 className="font-bold mb-2 text-yellow-900">📦 بيانات البند:</h4>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
@@ -1485,7 +1500,6 @@ export default function Home() {
                 </div>
               </div>
 
-              {/* جدول المكونات */}
               <h4 className="font-bold text-lg mb-3">🧱 المكونات ({Array.isArray(viewingBreakdown.components) ? viewingBreakdown.components.length : 0}):</h4>
               {Array.isArray(viewingBreakdown.components) && viewingBreakdown.components.length > 0 ? (
                 <div className="overflow-x-auto border-2 border-slate-200 rounded-lg mb-6">
@@ -1518,7 +1532,6 @@ export default function Home() {
                 <div className="text-center py-6 bg-gray-50 rounded-lg mb-6 text-gray-500">لا توجد مكونات محفوظة</div>
               )}
 
-              {/* التسعير */}
               <h4 className="font-bold text-lg mb-3">💰 التسعير:</h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-6">
                 <div className="bg-blue-50 p-3 rounded-lg flex justify-between items-center border border-blue-200"><span className="text-sm font-bold">التكلفة المباشرة:</span><span className="text-lg font-bold text-blue-800">{Math.round(viewingBreakdown.direct_cost || 0).toLocaleString("ar-EG")} ج.م</span></div>
@@ -1529,7 +1542,6 @@ export default function Home() {
                 <div className="bg-gradient-to-r from-green-600 to-emerald-600 text-white p-3 rounded-lg flex justify-between items-center"><span className="text-sm font-bold">السعر النهائي:</span><span className="text-lg font-bold">{Math.round(viewingBreakdown.final_price || 0).toLocaleString("ar-EG")} ج.م/{viewingBreakdown.unit}</span></div>
               </div>
 
-              {/* أزرار */}
               <div className="flex gap-3 pt-4 border-t-2">
                 <button onClick={deleteViewingBreakdown} className="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-lg font-bold">🗑️ حذف التحليل</button>
                 <button onClick={() => { setShowViewBreakdownModal(false); setViewingBreakdown(null); }} className="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 py-3 rounded-lg font-bold">إغلاق</button>
