@@ -271,6 +271,16 @@ export default function Home() {
     if (code === "2.8") return "calculate_breakdown_steel";
     if (code.startsWith("3.")) return "calculate_breakdown_insulation";
     if (code === "CO-003") return "calculate_breakdown_co003";
+    if (code === "RD-001") return "calculate_breakdown_crushed_stone";
+    if (code === "RD-002") return "calculate_breakdown_road_marking";
+    if (code === "RD-003") return "calculate_breakdown_warning_signs";
+    return "calculate_breakdown_rc";
+  };
+      const code = String(itemCode || "").trim();
+    if (code.startsWith("1.")) return "calculate_breakdown_earthworks";
+    if (code === "2.8") return "calculate_breakdown_steel";
+    if (code.startsWith("3.")) return "calculate_breakdown_insulation";
+    if (code === "CO-003") return "calculate_breakdown_co003";
     return "calculate_breakdown_rc";
   };
 
@@ -285,6 +295,36 @@ export default function Home() {
   // فكل بنود الخرسانة المسلحة RC كانت بتتصنّف غلط. هنا الحديد = steel بس لو مفيش كلمة خرسانة.
   const getEngineeringFamily = (item: any) => {
     const code = String(item?.item_code || "").trim();
+    const text = normalizeText(item?.item_description);
+    const unit = normalizeUnit(item?.unit);
+
+    if (code.startsWith("1.")) return "earthworks";
+    if (code.startsWith("3.")) return "insulation";
+    if (code === "CO-003") return "co003";
+
+    // ✅ بنود الطرق
+    if (/interlock|crushed lime|lime stone|curbstone|sidewalk|road marking|warning sign/i.test(text)) {
+      if (/crushed lime|lime stone|aggregate/i.test(text)) return "crushed_stone";
+      if (/road marking|road paint/i.test(text)) return "road_marking";
+      if (/warning sign|guidance sign|galvanized.*sign/i.test(text)) return "warning_signs";
+      if (/interlock|sidewalk/i.test(text)) return "roads_interlock";
+      if (/curbstone|curb stone/i.test(text)) return "roads_curbstone";
+      return "roads_general";
+    }
+
+    const hasConcrete = /concrete|خرسانه/.test(text);
+    if (code === "2.8" || (/\bsteel\b|\brebar\b|\breinforcement\b|حديد|تسليح/.test(text) && !hasConcrete)) return "steel";
+
+    if (code.startsWith("2.") || hasConcrete) {
+      const plain = /\bpc\b|plain concrete|blinding|خرسانه عاديه|نظافه/.test(text) && !/\brc\b|reinforced|مسلحه/.test(text);
+      return `${plain ? "pc" : "rc"}_${getElementHint(text)}`;
+    }
+    if (/masonry|block|brick|مباني|طوب/.test(text)) return "masonry";
+    if (/plaster|render|محاره|لياسه/.test(text)) return "plaster";
+    if (/tile|ceramic|porcelain|بلاط|سيراميك/.test(text)) return "finishes_tiles";
+    if (/paint|دهان/.test(text)) return "painting";
+    return `generic_${unit || "unknown"}`;
+  };    const code = String(item?.item_code || "").trim();
     const text = normalizeText(item?.item_description);
     const unit = normalizeUnit(item?.unit);
 
